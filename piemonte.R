@@ -48,10 +48,6 @@ pdata <- pdata[pdata$time<=nt,]
 
 sd(pdata$PM10, na.rm=TRUE)
 
-### define a temporal mesh
-tmesh <- inla.mesh.1d(1:nt, degree=1)
-tmesh$n
-
 ### as in Cameleti et. al. 2012
 smesh <- inla.mesh.2d(
         cbind(locs[,2], locs[,3]),
@@ -79,16 +75,14 @@ if(FALSE) {## alternative mesh
 
 smesh$n
 
-##pdf('smesh142.pdf', 7, 5)
-par(mar=c(0,0,1,0))
+par(mar=c(3,3,1,0))
 plot(smesh, asp=1)
 points(locs[,2:3], pch=8, col='red')
 lines(pborders, lwd=2, col='blue')
-##dev.off()
 
 ### define the stationary spatial model
-psigma <- c(20, 0.1)
-prs <- c(100, 0.5)
+psigma <- c(20, 0.1) ## P(sigma > 20) = 0.1
+prs <- c(100, 0.5) ## P(range < 100) = 0.5
 spde <- inla.spde2.pcmatern(
     mesh=smesh, alpha=2,
     prior.sigma=psigma, 
@@ -113,9 +107,11 @@ xx.scaled <- scale(pdata[xnames], xmean, xsd)
 idx.st <- inla.spde.make.index(
     name='s', n.spde=spde$n.spde, n.group=nt)
 
+sapply(idx.st, range)
+
 dsstack <- inla.stack(
     tag='e',
-    data=list(y=log(pdata$PM10)),
+    data=list(y=log(pdata$PM10)), ### not agree
     effects=list(
         data.frame(b0=1, xx.scaled),
         idx.st), 
@@ -183,3 +179,41 @@ gridp <- inla.mesh.projector(
     dims=round(2*dxy))
 
 ### make maps from here...
+st.m <- matrix(result$summary.random$s$mean, smesh$n)
+dim(st.m)
+
+### identify pixels outside the borders map
+spborders <- SpatialPolygons(
+    list(Polygons(list(Polygon(pborders)), '0')))
+id.out <- which(is.na(over(
+    SpatialPoints(gridp$lattice$loc),
+    spborders)))
+
+### project it
+z <- inla.mesh.project(gridp, st.m[,1])
+
+### set pixels outside as NA
+z[id.out] <- NA
+
+### visualize the first time on the map
+library(fields)
+plot(pborders, asp=1)
+image.plot(gridp$x, gridp$y,
+           z, add=TRUE)
+
+### make a unique breaks (overall) for colors
+bk <- seq(min(st.m)-1e-5, max(st.m)+1e-5, length=51)
+colorsk <- tim.colors(length(bk)-1)
+
+### visualize some days on the map
+par(mfrow=c(5,8), mar=c(0,0,0,0))
+for(k in round(seq(1, nt, length=40))) {
+    z <- inla.mesh.project(gridp, st.m[,k])
+    z[id.out] <- NA
+    plot(spborders)
+    image.plot(gridp$x, gridp$y, z, add=TRUE,
+               breaks=bk, col=colorsk)
+    legend('topleft', '', bty='n',
+           title=paste(sort(unique(pdata$Date))[k]))
+}
+
